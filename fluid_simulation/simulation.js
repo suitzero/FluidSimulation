@@ -23,8 +23,8 @@ if (NX > 5 && NY > 5) {
     if (centerR - 1 >= 0) pressure[centerR - 1][centerC] = new Multivector({ "1": -1.0 });
 }
 
-console.log("Fluid simulation placeholder loaded.");
-console.log("Multivector class available:", Multivector ? "Yes" : "No");
+console.log("\nFluid simulation placeholder loaded.");
+console.log("\nMultivector class available:", Multivector ? "Yes" : "No");
 console.log(`Grid: ${NX}x${NY}, Cell size: ${DX.toFixed(3)}x${DY.toFixed(3)}`);
 
 // Helper to safely get a component from a multivector in the field, handling boundaries (clamping)
@@ -142,53 +142,190 @@ function computeVectorLaplacian(vectorField, r, c, dx, dy) {
     return new Multivector({ "e1": laplacian_vx, "e2": laplacian_vy });
 }
 
+
+// Helper to perform bilinear interpolation of a multivector field
+function interpolateBilinear(field, r_float, c_float) {
+    r_float = Math.max(0, Math.min(r_float, NX - 1));
+    c_float = Math.max(0, Math.min(c_float, NY - 1));
+
+    const r0 = Math.floor(r_float);
+    const r1 = Math.min(r0 + 1, NX - 1);
+    const c0 = Math.floor(c_float);
+    const c1 = Math.min(c0 + 1, NY - 1);
+
+    const s1 = r_float - r0;
+    const s0 = 1.0 - s1;
+    const t1 = c_float - c0;
+    const t0 = 1.0 - t1;
+
+    const v00 = field[r0][c0];
+    const v10 = field[r1][c0];
+    const v01 = field[r0][c1];
+    const v11 = field[r1][c1];
+
+    const blades = new Set([
+        ...v00.coefficients.keys(),
+        ...v10.coefficients.keys(),
+        ...v01.coefficients.keys(),
+        ...v11.coefficients.keys()
+    ]);
+
+    const coeffs = {};
+    for (const blade of blades) {
+        const val00 = v00.coefficients.get(blade) || 0;
+        const val10 = v10.coefficients.get(blade) || 0;
+        const val01 = v01.coefficients.get(blade) || 0;
+        const val11 = v11.coefficients.get(blade) || 0;
+
+        const interpolated = s0 * (t0 * val00 + t1 * val01) + s1 * (t0 * val10 + t1 * val11);
+        if (Math.abs(interpolated) > 1e-10) {
+            coeffs[blade] = interpolated;
+        }
+    }
+
+    return new Multivector(coeffs);
+}
+
+// Semi-Lagrangian Advection
+function advect(field, velocityField, dt) {
+    const newField = Array(NX).fill(null).map(() => Array(NY).fill(null));
+
+    for (let r = 0; r < NX; r++) {
+        for (let c = 0; c < NY; c++) {
+            const v_x = getComponent(velocityField, r, c, "e1");
+            const v_y = getComponent(velocityField, r, c, "e2");
+
+            // Backtrace
+            const prev_r = r - v_x * dt / DX;
+            const prev_c = c - v_y * dt / DY;
+
+            newField[r][c] = interpolateBilinear(field, prev_r, prev_c);
+        }
+    }
+    return newField;
+}
+
+
+// Explicit Diffusion (Viscosity)
+function diffuse(field, nu, dt) {
+    const newField = Array(NX).fill(null).map(() => Array(NY).fill(null));
+
+    for (let r = 0; r < NX; r++) {
+        for (let c = 0; c < NY; c++) {
+            const laplacian = computeVectorLaplacian(field, r, c, DX, DY);
+
+            const currentCoeffs = new Map(field[r][c].coefficients);
+            for (const [blade, coeff] of laplacian.coefficients) {
+                currentCoeffs.set(blade, (currentCoeffs.get(blade) || 0) + nu * dt * coeff);
+            }
+
+            // Clean up small values
+            const finalCoeffs = {};
+            for (const [blade, coeff] of currentCoeffs) {
+                if (Math.abs(coeff) > 1e-10) {
+                    finalCoeffs[blade] = coeff;
+                }
+            }
+            newField[r][c] = new Multivector(finalCoeffs);
+        }
+    }
+    return newField;
+}
+
+
+// Computes divergence of vector field (e1 and e2 parts)
+function computeDivergence(vectorField, r, c, dx, dy) {
+    const dvx_dx = Dx(vectorField, r, c, "e1", dx);
+    const dvy_dy = Dy(vectorField, r, c, "e2", dy);
+    return dvx_dx + dvy_dy;
+}
+
+// Pressure Projection using Jacobi iteration for Poisson equation: ∇²p = ∇ · v
+function project(velocityField, iterations = 20) {
+    // Calculate divergence of velocity
+    const div = Array(NX).fill(null).map(() => Array(NY).fill(0));
+    for (let r = 0; r < NX; r++) {
+        for (let c = 0; c < NY; c++) {
+            div[r][c] = computeDivergence(velocityField, r, c, DX, DY);
+        }
+    }
+
+    // Initialize pressure to 0
+    let p = Array(NX).fill(null).map(() => Array(NY).fill(0));
+    let p_new = Array(NX).fill(null).map(() => Array(NY).fill(0));
+
+    // Jacobi iteration
+    for (let iter = 0; iter < iterations; iter++) {
+        for (let r = 0; r < NX; r++) {
+            for (let c = 0; c < NY; c++) {
+                const p_left = r > 0 ? p[r - 1][c] : 0;
+                const p_right = r < NX - 1 ? p[r + 1][c] : 0;
+                const p_up = c > 0 ? p[r][c - 1] : 0;
+                const p_down = c < NY - 1 ? p[r][c + 1] : 0;
+
+                // p[r][c] = (div[r][c] * dx * dy - (p_left + p_right + p_up + p_down)) / -4
+                // Let's assume dx == dy for simplicity, or we can write the exact form:
+                // d2p/dx2 + d2p/dy2 = div
+                // (p(r+1,c) - 2p(r,c) + p(r-1,c))/dx^2 + (p(r,c+1) - 2p(r,c) + p(r,c-1))/dy^2 = div(r,c)
+                const denom = 2 / (DX * DX) + 2 / (DY * DY);
+                const sum = (p_right + p_left) / (DX * DX) + (p_down + p_up) / (DY * DY) - div[r][c];
+                p_new[r][c] = sum / denom;
+            }
+        }
+        // Swap p and p_new
+        const temp = p;
+        p = p_new;
+        p_new = temp;
+    }
+
+    // Subtract pressure gradient from velocity
+    const newVelocity = Array(NX).fill(null).map(() => Array(NY).fill(null));
+
+    // Create a MultiVector field for pressure to reuse computePressureGradient
+    const pressureField = Array(NX).fill(null).map((_, r) =>
+        Array(NY).fill(null).map((_, c) => new Multivector({"1": p[r][c]}))
+    );
+
+    for (let r = 0; r < NX; r++) {
+        for (let c = 0; c < NY; c++) {
+            const gradP = computePressureGradient(pressureField, r, c, DX, DY);
+            newVelocity[r][c] = velocityField[r][c].subtract(gradP);
+        }
+    }
+
+    return { projectedVelocity: newVelocity, pressureField };
+}
+
+
+
 function main_simulation_loop() {
-    console.log("\n--- Simulation loop tick (testing derivatives) ---");
-    // TODO: Implement advection, diffusion, pressure projection, velocity update
+    console.log("\n--- Simulation loop tick ---");
+    const dt = 0.01;
+    const nu = 0.001; // Kinematic viscosity
+
+    // Step 1: Advection
+    vel = advect(vel, vel, dt);
+
+    // Step 2: Diffusion
+    vel = diffuse(vel, nu, dt);
+
+    // Step 3: Projection (Enforce incompressibility)
+    const result = project(vel, 20);
+    vel = result.projectedVelocity;
+    pressure = result.pressureField;
 
     if (NX > 5 && NY > 5) {
       const r_test = Math.floor(NX/2);
       const c_test = Math.floor(NY/2);
-
-      console.log(`Initial velocity at (${r_test},${c_test}): ${vel[r_test][c_test].toString()}`);
-
-      const gradV_test = computeGradV(vel, r_test, c_test, DX, DY);
-      console.log(`GradV at (${r_test},${c_test}): ${gradV_test.toString()}`);
-      // Expected for vel[r_test][c_test] = 0.5e1 + 0.3e2 and zeros elsewhere:
-      // dvx_dx = (0 - 0) / (2*DX) = 0
-      // dvy_dy = (0 - 0) / (2*DY) = 0
-      // dvx_dy = (0 - 0) / (2*DY) = 0  (for v_x component, centered at 0.5)
-      // dvy_dx = (0 - 0) / (2*DX) = 0  (for v_y component, centered at 0.3)
-      // This will be zero if neighbors are zero. Let's try non-centered point or more complex field.
-      // For the Dx/Dy, I've added boundary conditions, so at center it will be (0-0)/(2*DX) if neighbors are default Multivector()
-      // The current initial condition is a single point of non-zero velocity.
-      // So, Dx(vel, r_test, c_test, "e1", DX) will be (vel[r_test+1][c_test].e1 - vel[r_test-1][c_test].e1) / (2*DX) = (0-0)/(2*DX) = 0
-      // And Dx(vel, r_test, c_test, "e2", DX) will be (vel[r_test+1][c_test].e2 - vel[r_test-1][c_test].e2) / (2*DX) = (0-0)/(2*DX) = 0
-      // Similarly for Dy. So gradV will be 0.
-
-      const laplacianV_test = computeVectorLaplacian(vel, r_test, c_test, DX, DY);
-      console.log(`LaplacianV at (${r_test},${c_test}): ${laplacianV_test.toString()}`);
-      // d2vx_dx2 = (0 - 2*0.5 + 0) / DX^2 = -1 / DX^2
-      // d2vx_dy2 = (0 - 2*0.5 + 0) / DY^2 = -1 / DY^2
-      // laplacian_vx = -1/DX^2 - 1/DY^2
-      // d2vy_dx2 = (0 - 2*0.3 + 0) / DX^2 = -0.6 / DX^2
-      // d2vy_dy2 = (0 - 2*0.3 + 0) / DY^2 = -0.6 / DY^2
-      // laplacian_vy = -0.6/DX^2 - 0.6/DY^2
-      // lap_vx = (-1/(0.05*0.05)) * 2 = -400 * 2 = -800 (if DX=DY=0.05)
-      // lap_vy = (-0.6/(0.05*0.05)) * 2 = -240 * 2 = -480 (if DX=DY=0.05)
-
-      const gradP_test = computePressureGradient(pressure, r_test, c_test, DX, DY);
-      console.log(`GradP at (${r_test},${c_test}): ${gradP_test.toString()}`);
-      // pressure[centerR+1][centerC] = 1, pressure[centerR-1][centerC] = -1. pressure[centerR][centerC] = 0.
-      // dp_dx = ( P(r+1,c) - P(r-1,c) ) / (2*DX) = (1 - (-1)) / (2*DX) = 2 / (2*DX) = 1/DX = 1/0.05 = 20
-      // dp_dy = ( P(r,c+1) - P(r,c-1) ) / (2*DY) = (0 - 0) / (2*DY) = 0
-      // Expected: 20e1
+      console.log(`Velocity at (${r_test},${c_test}): ${vel[r_test][c_test].toString()}`);
+      console.log(`Pressure at (${r_test},${c_test}): ${pressure[r_test][c_test].toString()}`);
     }
 }
+
 main_simulation_loop();
 
 // Example usage:
 // const vec = new Multivector({"e1": 1, "e2": 2});
-// console.log("Vector:", vec.toString());
+// console.log("\nVector:", vec.toString());
 // const scalarField = new Multivector({"1": 10});
-// console.log("Scalar field value:", scalarField.toString());
+// console.log("\nScalar field value:", scalarField.toString());
