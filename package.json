@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "description": "2D fluid simulation built in JavaScript leveraging Geometric Algebra",
   "scripts": {
-    "test": "node tests/test_ga.js && node tests/test_simulation.js"
+    "test": "node tests/test_ga.js && node tests/test_simulation.js && node tests/test_config.js"
   }
 }

@@ -1,31 +1,65 @@
 // Basic 2D Fluid Simulation using Geometric Algebra
 const Multivector = require('../ga/ga.js');
 
-// Grid Parameters
-const NX = 20; // Number of cells in X (rows)
-const NY = 20; // Number of cells in Y (columns)
-const DX = 1.0 / NX; // Cell width
-const DY = 1.0 / NY; // Cell height
+// Grid Parameters Configuration
+let config = {
+    NX: 20, // Number of cells in X (rows)
+    NY: 20  // Number of cells in Y (columns)
+};
 
-// Fields Initialization
-// Velocity field (vel[r][c] is a Multivector for velocity at cell (r,c))
-let vel = Array(NX).fill(null).map(() => Array(NY).fill(null).map(() => new Multivector()));
-// Pressure field (pressure[r][c] is a Multivector for pressure (scalar) at cell (r,c))
-let pressure = Array(NX).fill(null).map(() => Array(NY).fill(null).map(() => new Multivector({ "1": 0 }))); // Initialize with zero pressure
+let NX = config.NX;
+let NY = config.NY;
+let DX = 1.0 / NX; // Cell width
+let DY = 1.0 / NY; // Cell height
 
-// Example initial condition: set a small initial velocity at the center
-if (NX > 5 && NY > 5) {
-    const centerR = Math.floor(NX / 2);
-    const centerC = Math.floor(NY / 2);
-    vel[centerR][centerC] = new Multivector({ "e1": 0.5, "e2": 0.3 });
-    // Add some pressure variation for testing gradient
-    if (centerR + 1 < NX) pressure[centerR + 1][centerC] = new Multivector({ "1": 1.0 });
-    if (centerR - 1 >= 0) pressure[centerR - 1][centerC] = new Multivector({ "1": -1.0 });
+let vel;
+let pressure;
+
+function initFields() {
+    // Fields Initialization
+    // Velocity field (vel[r][c] is a Multivector for velocity at cell (r,c))
+    vel = Array(NX).fill(null).map(() => Array(NY).fill(null).map(() => new Multivector()));
+    // Pressure field (pressure[r][c] is a Multivector for pressure (scalar) at cell (r,c))
+    pressure = Array(NX).fill(null).map(() => Array(NY).fill(null).map(() => new Multivector({ "1": 0 }))); // Initialize with zero pressure
+
+    // Example initial condition: set a small initial velocity at the center
+    if (NX > 5 && NY > 5) {
+        const centerR = Math.floor(NX / 2);
+        const centerC = Math.floor(NY / 2);
+        vel[centerR][centerC] = new Multivector({ "e1": 0.5, "e2": 0.3 });
+        // Add some pressure variation for testing gradient
+        if (centerR + 1 < NX) pressure[centerR + 1][centerC] = new Multivector({ "1": 1.0 });
+        if (centerR - 1 >= 0) pressure[centerR - 1][centerC] = new Multivector({ "1": -1.0 });
+    }
 }
+
+initFields();
 
 console.log("\nFluid simulation placeholder loaded.");
 console.log("\nMultivector class available:", Multivector ? "Yes" : "No");
 console.log(`Grid: ${NX}x${NY}, Cell size: ${DX.toFixed(3)}x${DY.toFixed(3)}`);
+
+function setConfig(opts) {
+    if (opts.NX !== undefined) {
+        if (!Number.isInteger(opts.NX) || opts.NX <= 0) {
+            throw new Error("NX must be a positive integer.");
+        }
+        config.NX = opts.NX;
+    }
+    if (opts.NY !== undefined) {
+        if (!Number.isInteger(opts.NY) || opts.NY <= 0) {
+            throw new Error("NY must be a positive integer.");
+        }
+        config.NY = opts.NY;
+    }
+    
+    NX = config.NX;
+    NY = config.NY;
+    DX = 1.0 / NX;
+    DY = 1.0 / NY;
+    
+    initFields();
+}
 
 // Helper to safely get a component from a multivector in the field, handling boundaries (clamping)
 function getComponent(field, r, c, bladeName) {
@@ -343,9 +377,11 @@ if (typeof module !== 'undefined') {
     diffuse,
     computeDivergence,
     project,
-    NX,
-    NY,
-    DX,
-    DY
+    setConfig,
+    get config() { return config; },
+    get NX() { return NX; },
+    get NY() { return NY; },
+    get DX() { return DX; },
+    get DY() { return DY; }
   };
 }
