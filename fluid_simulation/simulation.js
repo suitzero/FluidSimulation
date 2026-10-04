@@ -329,3 +329,23 @@ main_simulation_loop();
 // console.log("\nVector:", vec.toString());
 // const scalarField = new Multivector({"1": 10});
 // console.log("\nScalar field value:", scalarField.toString());
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    getComponent,
+    Dx,
+    Dy,
+    computeGradV,
+    computePressureGradient,
+    computeVectorLaplacian,
+    interpolateBilinear,
+    advect,
+    diffuse,
+    computeDivergence,
+    project,
+    NX,
+    NY,
+    DX,
+    DY
+  };
+}

@@ -1,0 +1,8 @@
+{
+  "name": "fluid-simulation",
+  "version": "1.0.0",
+  "description": "2D fluid simulation built in JavaScript leveraging Geometric Algebra",
+  "scripts": {
+    "test": "node tests/test_ga.js && node tests/test_simulation.js"
+  }
+}
